@@ -1,0 +1,13 @@
+spec:
+  template:
+    spec:
+      containers:
+      - name: website
+        volumeMounts:
+        - name: src
+          mountPath: /go/src/leangeder/website/
+      volumes:
+      - name: src
+        hostPath:
+          path: /website
+          type: Directory
