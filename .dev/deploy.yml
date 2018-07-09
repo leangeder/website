@@ -2,7 +2,7 @@ spec:
   template:
     spec:
       containers:
-      - name: website
+      - name: dev
         volumeMounts:
         - name: src
           mountPath: /go/src/leangeder/website/

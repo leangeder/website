@@ -1,2 +1,4 @@
+.deploy
 Dockerfile
-docker-compose.yml
+.git*
+.dockerignore
