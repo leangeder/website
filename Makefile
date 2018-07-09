@@ -9,8 +9,7 @@ TIMESTAMP = $(shell date +%s )
 REPO_CONTAINER := leangeder
 PROJECT_NAME := $(notdir $(CURDIR))
 REPO_SOURCE := git@github.com:leangeder/$(PROJECT_NAME)
-REPO_DEPLOY := git@github.com:leangeder/$(PROJECT_NAME)
-# REPO_DEPLOY := git@github.com:leangeder/deploy
+REPO_DEPLOY := git@github.com:leangeder/kube
 
 /usr/local/bin/minikube: $(PATH_BEAMERY_META)
 	@curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-$(UNAME)-amd64
@@ -31,7 +30,8 @@ endif
 .up: /usr/local/bin/minikube /usr/local/bin/kubectl
 ifeq (0,$(shell minikube status | grep Running | wc -l))
 	minikube config set WantReportErrorPrompt false
-	minikube start --memory=6144 --extra-config=apiserver.authorization-mode=RBAC --extra-config=controller-manager.cluster-signing-cert-file="/var/lib/localkube/certs/ca.crt" --extra-config=controller-manager.cluster-signing-key-file="/var/lib/localkube/certs/ca.key" --extra-config=apiserver.admission-control="NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota"
+	minikube start --cpus=4 --memory=8192 --mount --mount-string $(CURDIR):/$(PROJECT_NAME)
+	# minikube start --memory=6144 --extra-config=apiserver.authorization-mode=RBAC --extra-config=controller-manager.cluster-signing-cert-file="/var/lib/localkube/certs/ca.crt" --extra-config=controller-manager.cluster-signing-key-file="/var/lib/localkube/certs/ca.key" --extra-config=apiserver.admission-control="NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota"
 	# -minikube addons disable ingress
 	# -minikube addons disable heapster
 endif
@@ -71,11 +71,14 @@ update: .up
 	kubectl set image -f .deploy/deploy.yml $(PROJECT_NAME)=$(REPO_CONTAINER)/$(PROJECT_NAME):$(TIMESTAMP)
 
 create: .up /tmp/deploy/apps/$(PROJECT_NAME)/deploy.yml
-	kubectl apply -f /tmp/deploy/services --overwrite
-	kubectl apply -f .deploy --overwrite 
+	# kubectl apply -f /tmp/deploy/services --overwrite
+	kubectl apply -f .deploy/ --overwrite 
 
-# dev: .up /tmp/deploy/apps/$(PROJECT_NAME)/deploy.yml
-# 	sed '/^###/,$$d' Dockerfile > /tmp/Dockerfile_$(PROJECT_NAME)
-# 	$(eval DOCKER_SRC_PATH := $(shell grep -E "(COPY|ADD)" /tmp/Dockerfile_$(PROJECT_NAME) | cut -d\  -f 3))
-# 	eval $$(minikube docker-env); docker build -t $(REPO_CONTAINER)/$(PROJECT_NAME):dev -f /tmp/Dockerfile .
-# 	kubectl patch -f .deploy/deploy.yml --patch "$$(cat .dev/deploy.yml)"
+/tmp/dev_$(PROJECT_NAME).yml:
+	eval $$(minikube docker-env); docker build --target dev -t $(REPO_CONTAINER)/$(PROJECT_NAME):dev -f Dockerfile .
+	$(eval DOCKER_SRC_PATH := $(shell grep -E "(COPY|ADD)\ \." Dockerfile | cut -d\  -f 3))
+	echo "spec:\n  template:\n    spec:\n      containers:\n      - name: $(PROJECT_NAME)\n        volumeMounts:\n        - name: src\n          mountPath: $(DOCKER_SRC_PATH)\n      volumes:\n      - name: src\n        hostPath:\n          path: /$(PROJECT_NAME)\n          type: Directory" > /tmp/dev_$(PROJECT_NAME).yml
+
+dev: .up create /tmp/dev_$(PROJECT_NAME).yml
+	kubectl patch -f .deploy/deploy.yml --patch "$$(cat /tmp/dev_$(PROJECT_NAME).yml)"
+	kubectl logs -f .deploy/deploy.yml -f  
