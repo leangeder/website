@@ -1,4 +1,4 @@
-.PHONY: create update dev delete
+# .PHONY: create update dev delete
 .DEFAULT_GOAL := dev
 
 UNAME := $(shell uname -s | tr A-Z a-z)
@@ -30,10 +30,14 @@ endif
 .up: /usr/local/bin/minikube /usr/local/bin/kubectl
 ifeq (0,$(shell minikube status | grep Running | wc -l))
 	minikube config set WantReportErrorPrompt false
-	minikube start --cpus=4 --memory=8192 --mount --mount-string $(CURDIR):/$(PROJECT_NAME)
-	# minikube start --memory=6144 --extra-config=apiserver.authorization-mode=RBAC --extra-config=controller-manager.cluster-signing-cert-file="/var/lib/localkube/certs/ca.crt" --extra-config=controller-manager.cluster-signing-key-file="/var/lib/localkube/certs/ca.key" --extra-config=apiserver.admission-control="NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota"
-	# -minikube addons disable ingress
-	# -minikube addons disable heapster
+	minikube start --cpus=4 --memory=8192
+	# minikube start --cpus=4 --memory=8192 --mount --mount-string $(CURDIR):/$(PROJECT_NAME)
+	# # minikube start --memory=6144 --extra-config=apiserver.authorization-mode=RBAC --extra-config=controller-manager.cluster-signing-cert-file="/var/lib/localkube/certs/ca.crt" --extra-config=controller-manager.cluster-signing-key-file="/var/lib/localkube/certs/ca.key" --extra-config=apiserver.admission-control="NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota"
+	# # -minikube addons disable ingress
+	# # -minikube addons disable heapster
+	echo "{\"apiVersion\": \"v1\",\"data\": {\"upstreamNameservers\": \"[8.8.8.8,8.8.4.4]\"},\"kind\": \"ConfigMap\",\"metadata\": {\"name\": \"kube-dns\",\"namespace\": \"kube-system\"}}" > /tmp/minikube_dns.yaml;
+	kubectl apply -f /tmp/minikube_dns.yaml --overwrite;
+	minikube mount $(CURDIR):/$(PROJECT_NAME)
 endif
 
 /tmp/deploy:
@@ -60,16 +64,20 @@ endif
 	echo ".git*" >> .dockerignore
 	echo ".dockerignore" >> .dockerignore
 
+.PHONY: delete
 delete: .up
 	kubectl delete -R -f .deploy --force
 
+.PHONY: full_delete
 full_delete:
 	minikube delete
 
+.PHONY: update
 update: .up
 	eval $$(minikube docker-env); docker build -t $(REPO_CONTAINER)/$(PROJECT_NAME):$(TIMESTAMP) -f Dockerfile .;
 	kubectl set image -f .deploy/deploy.yml $(PROJECT_NAME)=$(REPO_CONTAINER)/$(PROJECT_NAME):$(TIMESTAMP)
 
+.PHONY: create
 create: .up /tmp/deploy/apps/$(PROJECT_NAME)/deploy.yml
 	# kubectl apply -f /tmp/deploy/services --overwrite
 	kubectl apply -f .deploy/ --overwrite 
@@ -79,6 +87,8 @@ create: .up /tmp/deploy/apps/$(PROJECT_NAME)/deploy.yml
 	$(eval DOCKER_SRC_PATH := $(shell grep -E "(COPY|ADD)\ \." Dockerfile | cut -d\  -f 3))
 	echo "spec:\n  template:\n    spec:\n      containers:\n      - name: $(PROJECT_NAME)\n        volumeMounts:\n        - name: src\n          mountPath: $(DOCKER_SRC_PATH)\n      volumes:\n      - name: src\n        hostPath:\n          path: /$(PROJECT_NAME)\n          type: Directory" > /tmp/dev_$(PROJECT_NAME).yml
 
+.PHONY: dev
 dev: .up create /tmp/dev_$(PROJECT_NAME).yml
-	kubectl patch -f .deploy/deploy.yml --patch "$$(cat /tmp/dev_$(PROJECT_NAME).yml)"
-	kubectl logs -f .deploy/deploy.yml -f  
+	kubectl patch -f .deploy/deploy.yml --patch "$$(cat /tmp/dev_$(PROJECT_NAME).yml)";
+	sleep 10;
+	kubectl logs $$(kubectl get pod --all-namespaces -l app=website -o jsonpath='{.items[*].metadata.name}');
